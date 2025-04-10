@@ -26,7 +26,7 @@ docker pull gszoboszlai/kia-hyundai-tracker:latest
 docker pull ghcr.io/amargo/kia-hyundai-tracker:latest
 ```
 
-#### Quick Start with Docker
+#### Quick Start with Docker Compose (Recommended)
 
 1. Create a `.env` file based on the example:
 ```bash
@@ -35,14 +35,41 @@ cp .env.example .env
 
 2. Edit the `.env` file with your credentials and preferences
 
-3. Run the container:
+3. Start the services using Docker Compose:
+```bash
+docker-compose up -d
+```
+
+This will start both the tracker and a MySQL database. The database data will be persisted in a Docker volume.
+
+To view the logs:
+```bash
+# View all logs
+docker-compose logs
+
+# Follow logs in real-time
+docker-compose logs -f
+
+# View logs for a specific service
+docker-compose logs tracker
+docker-compose logs db
+```
+
+To stop the services:
+```bash
+docker-compose down
+```
+
+#### Alternative: Running with Docker (Standalone)
+
+If you prefer to use your own database, you can run just the tracker container:
+
 ```bash
 docker run -d \
   --name kia-tracker \
   --restart unless-stopped \
   -p 5000:5000 \
   --env-file .env \
-  -v $(pwd)/database.db:/app/database.db \
   gszoboszlai/kia-hyundai-tracker:latest
 ```
 
