@@ -114,6 +114,8 @@ def scheduled_refresh():
     """Perform scheduled refresh if within active hours"""
     if is_within_active_hours():
         try:
+            vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
+            vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
             vehicle_client.refresh()
             logging.info("Scheduled refresh completed successfully")
         except Exception as e:

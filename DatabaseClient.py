@@ -193,16 +193,27 @@ class DatabaseClient:
         sql = 'SELECT date FROM stats_per_day;'
         cur.execute(sql)
         rows = cur.fetchall()
+        current_date = datetime.datetime.now().date()
+        saved_dates = [row[0] for row in rows]
+
         for day in self.vehicle_client.vehicle.daily_stats:
-            if any(day.date.strftime("%Y-%m-%d") == row[0] for row in rows):
-                logging.debug(f"Deleting previously saved day: {day.date.strftime('%Y-%m-%d')}")
-                sql = f"DELETE FROM stats_per_day WHERE date = '{day.date.strftime('%Y-%m-%d')}'"
-                cur.execute(sql)
+            # Skip the current day as it might change during the day
+            if day.date.date() == current_date:
+                continue
+
+            # Skip already saved days
+            day_str = day.date.strftime("%Y-%m-%d")
+            if day_str in saved_dates:
+                continue
+
+            # Calculate consumption values for new days only
             average_consumption = 0
             average_consumption_regen_deducted = 0
             if day.distance > 0:
                 average_consumption = day.total_consumed / (100 / day.distance)
                 average_consumption_regen_deducted = (day.total_consumed - day.regenerated_energy) / (100 / day.distance)
+
+            # Insert new day's data
             sql = f'''
             INSERT INTO stats_per_day(
                 date,
@@ -218,7 +229,7 @@ class DatabaseClient:
                 average_consumption_regen_deducted_kwh
             )
             VALUES(
-                '{day.date.strftime("%Y-%m-%d")}',
+                '{day_str}',
                 {round(datetime.datetime.timestamp(day.date))},
                 {round(day.total_consumed / 1000, 1)},
                 {round(day.engine_consumption / 1000, 1)},
@@ -232,6 +243,8 @@ class DatabaseClient:
             )'''
             cur.execute(sql)
             conn.commit()
+            logging.info(f"Saved new daily stats for: {day_str}")
+
         conn.close()
 
     def log_error(self, exception: Exception):

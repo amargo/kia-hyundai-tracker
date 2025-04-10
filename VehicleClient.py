@@ -43,10 +43,10 @@ class VehicleClient:
         # interval in seconds between checks for cached requests
         # we are limited to 200 requests a day, including cached
         # that's about one every 8 minutes
-        # we set it to 4 hours for cached refreshes.
-        self.CACHED_REFRESH_INTERVAL = 3600 * 4
+        # we set it to 2 hours for cached refreshes.
+        self.CACHED_REFRESH_INTERVAL = 3600 * 2
 
-        self.CAR_OFF_FORCE_REFRESH_INTERVAL = 3600 * 6
+        self.CAR_OFF_FORCE_REFRESH_INTERVAL = 3600 * 4
 
         self.ENGINE_RUNNING_FORCE_REFRESH_INTERVAL = 600
         self.DC_CHARGE_FORCE_REFRESH_INTERVAL = 1800
@@ -147,25 +147,25 @@ class VehicleClient:
         - max speed
         - average speed
         """
+        if not self.vehicle.daily_stats:
+            return
 
-        # using 2020-01-01 as default date
-        # we don't want to go too far back to prevent rate limiting
-        oldest_saved_date = self.db_client.get_most_recent_saved_trip_timestamp() or datetime.datetime(2020, 1, 1)
-        current_date = datetime.datetime.now()
+        # Meghatározzuk a legrégebbi és legújabb dátumot a daily_stats-ból
+        dates = [stat.date for stat in self.vehicle.daily_stats]
+        oldest_date = min(dates)
+        newest_date = max(dates)
 
+        # Hozzáadjuk a hónapokat a listához
         months_list = []
+        current_date = oldest_date
+        while current_date <= newest_date:
+            month_str = current_date.strftime("%Y%m")
+            if month_str not in months_list:
+                months_list.append(month_str)
+            current_date += relativedelta(days=1)
 
-        # create a list of months to iterate through, in the API's format:
-        # 202001 (jan 2020)
-        # 202002 (feb 2020)
-        # 202003 (mar 2020)
-        # etc...
 
-        while oldest_saved_date < current_date:
-            # expected format: YYYYMM
-            months_list.append(oldest_saved_date.strftime("%Y%m"))
-            oldest_saved_date += relativedelta(months=1)
-
+        today = datetime.date.today()
         for yyyymm in months_list:
             try:
                 self.vm.update_month_trip_info(self.vehicle.id, yyyymm)
@@ -175,6 +175,11 @@ class VehicleClient:
 
             if self.vehicle.month_trip_info is not None:
                 for day in self.vehicle.month_trip_info.day_list:  # ordered on day
+                    # Skip current day's trips
+                    day_date = datetime.datetime.strptime(day.yyyymmdd, "%Y%m%d").date()
+                    if day_date == today:
+                        continue
+
                     most_recent_trip = self.db_client.get_most_recent_saved_trip_timestamp()
                     if most_recent_trip is not None:
                         if datetime.datetime.strptime(day.yyyymmdd, "%Y%m%d") < most_recent_trip:
