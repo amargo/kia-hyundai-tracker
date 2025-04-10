@@ -54,7 +54,7 @@ class VehicleClient:
 
         self.vm = VehicleManager(region=1, brand=1, username=os.environ["KIA_USERNAME"],
                                  password=os.environ["KIA_PASSWORD"],
-                                 pin="")
+                                 pin=os.environ["KIA_PIN"])
 
     def get_estimated_charging_power(self):
         """
@@ -175,11 +175,10 @@ class VehicleClient:
 
             if self.vehicle.month_trip_info is not None:
                 for day in self.vehicle.month_trip_info.day_list:  # ordered on day
-                    # warning: this causes an API call.
-                    # skip this day if already saved in db
-                    if datetime.datetime.strptime(day.yyyymmdd,
-                                                  "%Y%m%d") < self.db_client.get_most_recent_saved_trip_timestamp():
-                        continue
+                    most_recent_trip = self.db_client.get_most_recent_saved_trip_timestamp()
+                    if most_recent_trip is not None:
+                        if datetime.datetime.strptime(day.yyyymmdd, "%Y%m%d") < most_recent_trip:
+                            continue
 
                     try:
                         self.vm.update_day_trip_info(self.vehicle.id, day.yyyymmdd)
@@ -187,11 +186,11 @@ class VehicleClient:
                         self.handle_api_exception(e)
                         return
 
-                    # we need to save to database in this loop, because we depend on the currently selected day
+                    # process and save trips for this day
                     if self.vehicle.day_trip_info is not None:
-                        day = datetime.datetime.strptime(self.vehicle.day_trip_info.yyyymmdd, "%Y%m%d")
+                        day_date = datetime.datetime.strptime(self.vehicle.day_trip_info.yyyymmdd, "%Y%m%d")
                         for trip in reversed(self.vehicle.day_trip_info.trip_list):  # show oldest first
-                            self.db_client.save_trip(day, trip)
+                            self.db_client.save_trip(day_date, trip)
 
     def save_log(self):
 
@@ -283,7 +282,12 @@ class VehicleClient:
         self.set_interval()
 
         # compare odometers. higher odo means we drove and new data must be pulled
-        if self.vehicle.odometer > self.db_client.get_last_update_odometer():
+        last_db_odometer = self.db_client.get_last_update_odometer()
+        if not last_db_odometer:
+            self.logger.info("Saving log...")
+            self.save_log()            
+            
+        if last_db_odometer and self.vehicle.odometer > last_db_odometer:
             # it's not time to force refresh yet, but we might still have data on the server
             # that is more recent that our last saved data, so we save it
 
