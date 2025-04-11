@@ -9,6 +9,10 @@ from dotenv import load_dotenv
 from DatabaseClient import DatabaseClient
 from hyundai_kia_connect_api import Vehicle, VehicleManager
 from hyundai_kia_connect_api.exceptions import RateLimitingError, APIError, RequestTimeoutError
+from Logger import Logger
+
+# Configure logger
+logger = Logger.get_logger(__name__)
 
 
 class ChargeType(Enum):
@@ -37,8 +41,8 @@ class VehicleClient:
         self.charge_type: ChargeType = ChargeType.UNKNOWN
         self.vehicle: [Vehicle, None] = None
         self.vm = None
-        self.logger = None
         self.trips = None  # vehicle trips. better motel than the one in the library
+        self.logger = Logger.get_logger(__name__)
 
         # interval in seconds between checks for cached requests
         # we are limited to 200 requests a day, including cached
@@ -205,7 +209,7 @@ class VehicleClient:
 
             estimated_end_datetime = datetime.datetime.now() + datetime.timedelta(
                 minutes=self.vehicle.ev_estimated_current_charge_duration)
-            logging.info(f"Estimated end time: {estimated_end_datetime.strftime('%d/%m/%Y at %H:%M')}")
+            self.logger.info(f"Estimated end time: {estimated_end_datetime.strftime('%d/%m/%Y at %H:%M')}")
         else:
             # battery is not charging nor is the engine running
             self.charging_power_in_kilowatts = 0
@@ -306,7 +310,9 @@ class VehicleClient:
             self.db_client.save_daily_stats()
             self.get_estimated_charging_power()
             # process_trips() does at least 2 API calls even when there are no new trips.
-            self.process_trips()
+            # Only process trips if we have valid vehicle data
+            if self.vehicle and hasattr(self.vehicle, 'daily_stats') and self.vehicle.daily_stats:
+                self.process_trips()
 
         db_last_update_ts = self.db_client.get_last_update_timestamp()
 

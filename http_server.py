@@ -1,19 +1,19 @@
-import logging
 import os
 import time
 from datetime import datetime, timezone
 import threading
 from apscheduler.schedulers.background import BackgroundScheduler
-
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
+from hyundai_kia_connect_api.exceptions import RateLimitingError
 
 from VehicleClient import VehicleClient
-from hyundai_kia_connect_api import ClimateRequestOptions
-from hyundai_kia_connect_api.const import OrderStatus
-from hyundai_kia_connect_api.exceptions import DeviceIDError, RateLimitingError
+from Logger import Logger
 
 app = Flask(__name__)
+
+vehicle_client = None
+logger = Logger.get_logger(__name__)
 
 @app.route("/")
 def index():
@@ -113,20 +113,27 @@ def is_within_active_hours():
 def scheduled_refresh():
     """Perform scheduled refresh if within active hours"""
     if is_within_active_hours():
+        logger.info("=== Starting scheduled refresh ===")
         try:
+            logger.info("Step 1/2: Requesting fresh data from vehicle...")
             vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
             vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
-            vehicle_client.refresh()
-            logging.info("Scheduled refresh completed successfully")
+            logger.info("Step 1/2: Successfully received fresh data from vehicle")
         except Exception as e:
-            logging.error(f"Error during scheduled refresh: {e}")
+            logger.error(f"Step 1/2: Failed to get fresh data from vehicle: {str(e)}")
+            return
+
+        try:
+            logger.info("Step 2/2: Processing and saving vehicle data...")
+            vehicle_client.refresh()
+            logger.info("Step 2/2: Successfully processed and saved vehicle data")
+            logger.info("=== Scheduled refresh completed successfully ===")
+        except Exception as e:
+            logger.error(f"Step 2/2: Failed to process vehicle data: {str(e)}")
 
 if __name__ == "__main__":
     # Load environment variables
     load_dotenv()
-    
-    # Configure logging
-    logging.basicConfig(level=logging.DEBUG)
     
     # Initialize scheduler
     scheduler = BackgroundScheduler()
@@ -142,12 +149,14 @@ if __name__ == "__main__":
                 vehicle_client.vm.check_and_refresh_token()
                 break
             except RateLimitingError:
-                logging.error("Got rate limited. Will try again in 1 hour.")
+                logger.error("Got rate limited. Will try again in 1 hour.")
                 time.sleep(60 * 60)
 
         vehicle_client.vehicle = vehicle_client.vm.get_vehicle(os.environ["KIA_VEHICLE_UUID"])
 
         # Run Flask app
-        app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+        app.run(host='0.0.0.0', 
+                port=int(os.getenv('PORT', 5000)),
+                debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')  
     except KeyboardInterrupt:
         scheduler.shutdown()

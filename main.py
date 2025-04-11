@@ -1,16 +1,8 @@
 import argparse
-import logging
-
-import coloredlogs
-
 from VehicleClient import VehicleClient
 
-logger = logging.getLogger(__name__)
-coloredlogs.install(level='DEBUG', isatty=True)
-
-if __name__ == '__main__':
+if __name__ == '__main__':  
     vehicle_client = VehicleClient()
-    vehicle_client.logger = logger
 
     parser = argparse.ArgumentParser()
 
