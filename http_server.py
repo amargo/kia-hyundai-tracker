@@ -110,26 +110,50 @@ def is_within_active_hours():
     end_hour = int(os.getenv('REFRESH_END_HOUR', '22'))
     return start_hour <= current_hour < end_hour
 
-def scheduled_refresh():
-    """Perform scheduled refresh if within active hours"""
-    if is_within_active_hours():
-        logger.info("=== Starting scheduled refresh ===")
-        try:
-            logger.info("Step 1/2: Requesting fresh data from vehicle...")
-            vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
-            vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
-            logger.info("Step 1/2: Successfully received fresh data from vehicle")
-        except Exception as e:
-            logger.error(f"Step 1/2: Failed to get fresh data from vehicle: {str(e)}")
-            return
+def get_min_aux_battery_soc():
+    """Get minimum auxiliary battery SOC threshold from env, ensuring it's not below 60%"""
+    return max(60, int(os.getenv('MIN_AUX_BATTERY_SOC', '80')))
 
-        try:
-            logger.info("Step 2/2: Processing and saving vehicle data...")
-            vehicle_client.refresh()
-            logger.info("Step 2/2: Successfully processed and saved vehicle data")
-            logger.info("=== Scheduled refresh completed successfully ===")
-        except Exception as e:
-            logger.error(f"Step 2/2: Failed to process vehicle data: {str(e)}")
+def is_aux_battery_ok():
+    """Check if auxiliary battery level is above minimum threshold"""
+    min_aux_soc = get_min_aux_battery_soc()    
+    current_soc = vehicle_client.vehicle.car_battery_percentage
+    
+    if current_soc is None:
+        logger.warning("Auxiliary battery SOC is not available")
+        return False
+        
+    logger.debug(f"Current auxiliary battery SOC: {current_soc}%")
+    return current_soc >= min_aux_soc
+
+def scheduled_refresh():
+    """Perform scheduled refresh if within active hours and auxiliary battery is OK"""
+    if not is_within_active_hours():
+        return
+
+    vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
+
+    if not is_aux_battery_ok():
+        logger.warning(f"Auxiliary battery SOC ({vehicle_client.vehicle.car_battery_percentage}%) is below minimum threshold ({get_min_aux_battery_soc()}%), skipping refresh")
+        return
+
+    logger.info("=== Starting scheduled refresh ===")
+    try:
+        logger.info("Step 1/2: Requesting fresh data from vehicle...")
+        vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
+        vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
+        logger.info("Step 1/2: Successfully received fresh data from vehicle")
+    except Exception as e:
+        logger.error(f"Step 1/2: Failed to get fresh data from vehicle: {str(e)}")
+        return
+
+    try:
+        logger.info("Step 2/2: Processing and saving vehicle data...")
+        vehicle_client.refresh()
+        logger.info("Step 2/2: Successfully processed and saved vehicle data")
+        logger.info("=== Scheduled refresh completed successfully ===")
+    except Exception as e:
+        logger.error(f"Step 2/2: Failed to process vehicle data: {str(e)}")
 
 if __name__ == "__main__":
     # Load environment variables
