@@ -5,7 +5,7 @@ import threading
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
-from hyundai_kia_connect_api.exceptions import RateLimitingError
+from hyundai_kia_connect_api.exceptions import RateLimitingError, InvalidAPIResponseError
 
 from VehicleClient import VehicleClient
 from Logger import Logger
@@ -126,25 +126,38 @@ def is_aux_battery_ok():
     logger.debug(f"Current auxiliary battery SOC: {current_soc}%")
     return current_soc >= min_aux_soc
 
+def update_vehicle_state():
+    """Force refresh and update vehicle state"""
+    vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
+    vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
+
 def scheduled_refresh():
     """Perform scheduled refresh if within active hours and auxiliary battery is OK"""
     if not is_within_active_hours():
         return
 
-    vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
-
-    if not is_aux_battery_ok():
-        logger.warning(f"Auxiliary battery SOC ({vehicle_client.vehicle.car_battery_percentage}%) is below minimum threshold ({get_min_aux_battery_soc()}%), skipping refresh")
-        return
-
-    logger.info("=== Starting scheduled refresh ===")
     try:
-        logger.info("Step 1/2: Requesting fresh data from vehicle...")
-        vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
         vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
+
+        if not is_aux_battery_ok():
+            logger.warning(f"Auxiliary battery SOC ({vehicle_client.vehicle.car_battery_percentage}%) is below minimum threshold ({get_min_aux_battery_soc()}%), skipping refresh")
+            return
+
+        logger.info("=== Starting scheduled refresh ===")
+        logger.info("Step 1/2: Requesting fresh data from vehicle...")
+        update_vehicle_state()
         logger.info("Step 1/2: Successfully received fresh data from vehicle")
+    except InvalidAPIResponseError:
+        logger.warning("Token expired, attempting to refresh...")
+        try:
+            vehicle_client.vm.check_and_refresh_token()
+            update_vehicle_state()
+            logger.info("Successfully refreshed token and updated vehicle state")
+        except Exception as refresh_error:
+            logger.error(f"Failed to refresh token or update vehicle state: {str(refresh_error)}")
+            return
     except Exception as e:
-        logger.error(f"Step 1/2: Failed to get fresh data from vehicle: {str(e)}")
+        logger.error(f"Failed during vehicle refresh: {str(e)}")
         return
 
     try:
