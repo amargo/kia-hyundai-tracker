@@ -35,6 +35,17 @@ cp .env.example .env
 
 2. Edit the `.env` file with your credentials and preferences
 
+#### Timezone configuration for scheduler
+
+You can set the timezone for the periodic background tasks using the `KIA_TRACKER_TIMEZONE` environment variable. If not set, the default is `Europe/Budapest`.
+
+Example in your `.env` file:
+```env
+KIA_TRACKER_TIMEZONE=Europe/Budapest
+```
+
+This ensures that all scheduled tasks will run according to your local time.
+
 3. Start the services using Docker Compose:
 ```bash
 docker-compose up -d

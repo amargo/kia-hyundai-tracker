@@ -2,11 +2,12 @@ import os
 import time
 from datetime import datetime, timezone
 import threading
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from hyundai_kia_connect_api.exceptions import RateLimitingError, InvalidAPIResponseError
-
+from pytz import timezone
 from VehicleClient import VehicleClient
 from Logger import Logger
 
@@ -173,7 +174,11 @@ if __name__ == "__main__":
     load_dotenv()
     
     # Initialize scheduler
-    scheduler = BackgroundScheduler()
+    scheduler_timezone = os.getenv('KIA_TRACKER_TIMEZONE')
+    if scheduler_timezone:
+        scheduler = BackgroundScheduler(timezone=timezone(scheduler_timezone))
+    else:
+        scheduler = BackgroundScheduler()
     refresh_interval = int(os.getenv('REFRESH_INTERVAL_MINUTES', '30'))
     scheduler.add_job(scheduled_refresh, 'interval', minutes=refresh_interval)
     scheduler.start()
