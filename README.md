@@ -37,11 +37,11 @@ cp .env.example .env
 
 #### Timezone configuration for scheduler
 
-You can set the timezone for the periodic background tasks using the `KIA_TRACKER_TIMEZONE` environment variable. If not set, the default is `Europe/Budapest`.
+You can set the timezone for the periodic background tasks using the `UVO_TRACKER_TIMEZONE` environment variable. If not set, the default is `Europe/Budapest`.
 
 Example in your `.env` file:
 ```env
-KIA_TRACKER_TIMEZONE=Europe/Budapest
+UVO_TRACKER_TIMEZONE=Europe/Budapest
 ```
 
 This ensures that all scheduled tasks will run according to your local time.
@@ -114,10 +114,10 @@ cp .env.example .env
 The application is configured using environment variables. Here are the key settings:
 
 ### Required Settings
-- `KIA_USERNAME`: Your Kia Connect/Bluelink email
-- `KIA_PASSWORD`: Your Kia Connect/Bluelink password
-- `KIA_VEHICLE_UUID`: Your vehicle's UUID
-- `KIA_PIN`: Your Kia Connect/Bluelink PIN code
+- `UVO_USERNAME`: Your Kia Connect/Bluelink email
+- `UVO_PASSWORD`: Your Kia Connect/Bluelink password
+- `UVO_VEHICLE_UUID`: Your vehicle's UUID
+- `UVO_PIN`: Your Kia Connect/Bluelink PIN code
 
 ### Optional Settings
 - `REFRESH_START_HOUR`: Start hour for vehicle updates (default: 7)
@@ -128,10 +128,10 @@ The application is configured using environment variables. Here are the key sett
 ### Database Configuration
 By default, SQLite is used. For MySQL:
 ```env
-KIA_DB_HOST=your-mysql-host
-KIA_DB_USER=your-username
-KIA_DB_PASSWORD=your-password
-KIA_DB_NAME=your-database
+UVO_DB_HOST=your-mysql-host
+UVO_DB_USER=your-username
+UVO_DB_PASSWORD=your-password
+UVO_DB_NAME=your-database
 ```
 
 ## Usage

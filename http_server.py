@@ -174,7 +174,7 @@ if __name__ == "__main__":
     load_dotenv()
     
     # Initialize scheduler
-    scheduler_timezone = os.getenv('KIA_TRACKER_TIMEZONE')
+    scheduler_timezone = os.getenv('UVO_TRACKER_TIMEZONE')
     if scheduler_timezone:
         scheduler = BackgroundScheduler(timezone=timezone(scheduler_timezone))
     else:
@@ -194,7 +194,7 @@ if __name__ == "__main__":
                 logger.error("Got rate limited. Will try again in 1 hour.")
                 time.sleep(60 * 60)
 
-        vehicle_client.vehicle = vehicle_client.vm.get_vehicle(os.environ["KIA_VEHICLE_UUID"])
+        vehicle_client.vehicle = vehicle_client.vm.get_vehicle(os.environ["UVO_VEHICLE_UUID"])
 
         # Run Flask app
         app.run(host='0.0.0.0', 

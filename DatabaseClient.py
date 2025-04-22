@@ -9,14 +9,14 @@ from hyundai_kia_connect_api.Vehicle import TripInfo
 class DatabaseClient:
     def __init__(self, vehicle_client: VehicleClient):
         # Retrieve MySQL/MariaDB connection parameters from environment variables
-        self.db_host = os.environ.get("KIA_DB_HOST")
-        self.db_port = int(os.environ.get("KIA_DB_PORT", 3306))
-        self.db_user = os.environ.get("KIA_DB_USER")
-        self.db_password = os.environ.get("KIA_DB_PASSWORD")
-        self.db_database = os.environ.get("KIA_DB_NAME")
+        self.db_host = os.environ.get("UVO_DB_HOST")
+        self.db_port = int(os.environ.get("UVO_DB_PORT", 3306))
+        self.db_user = os.environ.get("UVO_DB_USER")
+        self.db_password = os.environ.get("UVO_DB_PASSWORD")
+        self.db_database = os.environ.get("UVO_DB_NAME")
 
         if not (self.db_host and self.db_user and self.db_database):
-            raise NameError("Required database environment variables (KIA_DB_HOST, KIA_DB_USER, KIA_DB_DATABASE) are not set")
+            raise NameError("Required database environment variables (UVO_DB_HOST, UVO_DB_USER, UVO_DB_DATABASE) are not set")
 
         # Check if the schema is initialized (e.g., if the 'log' table exists)
         try:

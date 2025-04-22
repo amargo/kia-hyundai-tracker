@@ -14,10 +14,10 @@ services:
     container_name: kia-tracker-db
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${KIA_DB_PASSWORD}
-      MYSQL_DATABASE: ${KIA_DB_NAME}
-      MYSQL_USER: ${KIA_DB_USER}
-      MYSQL_PASSWORD: ${KIA_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${UVO_DB_PASSWORD}
+      MYSQL_DATABASE: ${UVO_DB_NAME}
+      MYSQL_USER: ${UVO_DB_USER}
+      MYSQL_PASSWORD: ${UVO_DB_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
     ports:

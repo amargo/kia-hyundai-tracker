@@ -56,9 +56,9 @@ class VehicleClient:
         self.DC_CHARGE_FORCE_REFRESH_INTERVAL = 1800
         self.AC_CHARGE_FORCE_REFRESH_INTERVAL = 1800
 
-        self.vm = VehicleManager(region=1, brand=1, username=os.environ["KIA_USERNAME"],
-                                 password=os.environ["KIA_PASSWORD"],
-                                 pin=os.environ["KIA_PIN"])
+        self.vm = VehicleManager(region=1, brand=1, username=os.environ["UVO_USERNAME"],
+                                 password=os.environ["UVO_PASSWORD"],
+                                 pin=os.environ["UVO_PIN"])
 
     def get_estimated_charging_power(self):
         """
@@ -274,7 +274,7 @@ class VehicleClient:
             self.handle_api_exception(e)
             return
 
-        self.vehicle = self.vm.get_vehicle(os.environ["KIA_VEHICLE_UUID"])
+        self.vehicle = self.vm.get_vehicle(os.environ["UVO_VEHICLE_UUID"])
         # fetch cached status, but do not retrieve driving info (driving stats) just yet, to prevent making too
         # many API calls. yes, cached calls also increment the API limit counter.
 
