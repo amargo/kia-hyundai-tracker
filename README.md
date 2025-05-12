@@ -28,6 +28,8 @@ docker pull ghcr.io/amargo/kia-hyundai-tracker:latest
 
 #### Quick Start with Docker Compose (Recommended)
 
+This project includes a [`docker-compose.yml`](docker-compose.yml) file that sets up both the tracker and a MySQL database.
+
 1. Create a `.env` file based on the example:
 ```bash
 cp .env.example .env
