@@ -7,6 +7,7 @@
     "group:monorepos",
     "group:recommended",
     ":pinDigestsDisabled",
+
     "workarounds:all"
   ],
   "enabledManagers": [
@@ -18,6 +19,12 @@
     {
       "matchDatasources": [
         "docker"
+      ],
+      "pinDigests": false
+    },
+    {
+      "matchManagers": [
+        "github-actions"
       ],
       "pinDigests": false
     },
@@ -74,7 +81,7 @@
       ],
       "automerge": true,
       "groupName": "⚡ GitHub Actions updates"
-    },    
+    },
     {
       "matchUpdateTypes": [
         "patch"
