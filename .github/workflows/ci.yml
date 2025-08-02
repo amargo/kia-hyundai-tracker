@@ -10,8 +10,10 @@ on:
 
 jobs:
   build-and-push-docker-image:
-    name: Build kia-hyundai-tracker image
+    name: Build image
     runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: kia-hyundai-tracker
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,7 +25,7 @@ jobs:
           flavor: latest=true
           images: |
             ghcr.io/${{ github.repository }}
-            docker.io/gszoboszlai/kia-hyundai-tracker
+            docker.io/gszoboszlai/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -58,7 +60,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
             ${{ steps.meta.outputs.labels }}
-            org.opencontainers.image.source=https://github.com/amargo/kia-hyundai-tracker
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
