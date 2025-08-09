@@ -1,4 +1,4 @@
-curlify==2.2.1
+curlify==3.0.0
 hyundai_kia_connect_api==3.43.5
 coloredlogs==15.0.1
 flask==3.1.1
