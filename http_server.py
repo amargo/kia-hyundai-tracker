@@ -1,13 +1,13 @@
 import os
 import time
-from datetime import datetime, timezone
 import threading
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from hyundai_kia_connect_api.exceptions import RateLimitingError, InvalidAPIResponseError
-from pytz import timezone
+from pytz import timezone as pytz_timezone
+from datetime import datetime, timezone
 from VehicleClient import VehicleClient
 from Logger import Logger
 
@@ -46,7 +46,7 @@ def get_cached_status():
     last_vehicle_update = vehicle_client.vehicle.last_updated_at
     if not last_vehicle_update.tzinfo:
         last_vehicle_update = last_vehicle_update.replace(tzinfo=timezone.utc)
-    
+
     last_db_update = vehicle_client.db_client.get_last_update_timestamp()
     if not last_db_update.tzinfo:
         last_db_update = last_db_update.replace(tzinfo=timezone.utc)
@@ -71,16 +71,16 @@ def get_cached_status():
 @app.route("/battery")
 def get_battery_soc():
     vehicle_client.vm.update_all_vehicles_with_cached_state()
-    
+
     # Convert both timestamps to UTC for comparison
     last_vehicle_update = vehicle_client.vehicle.last_updated_at
     if not last_vehicle_update.tzinfo:
         last_vehicle_update = last_vehicle_update.replace(tzinfo=timezone.utc)
-    
+
     last_db_update = vehicle_client.db_client.get_last_update_timestamp()
     if not last_db_update.tzinfo:
         last_db_update = last_db_update.replace(tzinfo=timezone.utc)
-    
+
     if last_vehicle_update > last_db_update:
         vehicle_client.save_log()
     return str(vehicle_client.vehicle.ev_battery_percentage)
@@ -101,7 +101,7 @@ def toggle_charge():
         time.sleep(5)
         status = vehicle_client.vm.get_last_action_status(vehicle_client.vehicle.id)
         return jsonify({"action": "charge_" + action, "status": status})
-    
+
     return jsonify({"action": "charge_" + action, "status": "command_sent"})
 
 def is_within_active_hours():
@@ -117,13 +117,13 @@ def get_min_aux_battery_soc():
 
 def is_aux_battery_ok():
     """Check if auxiliary battery level is above minimum threshold"""
-    min_aux_soc = get_min_aux_battery_soc()    
+    min_aux_soc = get_min_aux_battery_soc()
     current_soc = vehicle_client.vehicle.car_battery_percentage
-    
+
     if current_soc is None:
         logger.warning("Auxiliary battery SOC is not available")
         return False
-        
+
     logger.debug(f"Current auxiliary battery SOC: {current_soc}%")
     return current_soc >= min_aux_soc
 
@@ -172,17 +172,17 @@ def scheduled_refresh():
 if __name__ == "__main__":
     # Load environment variables
     load_dotenv()
-    
+
     # Initialize scheduler
     scheduler_timezone = os.getenv('UVO_TRACKER_TIMEZONE')
     if scheduler_timezone:
-        scheduler = BackgroundScheduler(timezone=timezone(scheduler_timezone))
+        scheduler = BackgroundScheduler(timezone=pytz_timezone(scheduler_timezone))
     else:
         scheduler = BackgroundScheduler()
     refresh_interval = int(os.getenv('REFRESH_INTERVAL_MINUTES', '30'))
     scheduler.add_job(scheduled_refresh, 'interval', minutes=refresh_interval)
     scheduler.start()
-    
+
     try:
         # Initialize vehicle client
         vehicle_client = VehicleClient()
@@ -197,8 +197,8 @@ if __name__ == "__main__":
         vehicle_client.vehicle = vehicle_client.vm.get_vehicle(os.environ["UVO_VEHICLE_UUID"])
 
         # Run Flask app
-        app.run(host='0.0.0.0', 
+        app.run(host='0.0.0.0',
                 port=int(os.getenv('PORT', 5000)),
-                debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')  
+                debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
     except KeyboardInterrupt:
         scheduler.shutdown()
