@@ -6,6 +6,12 @@ on:
 jobs:
   renovate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      issues: write
+      pull-requests: write
+      security-events: read # This is needed for vulnerability alerts    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

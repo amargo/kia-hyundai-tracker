@@ -7,7 +7,6 @@
     "group:monorepos",
     "group:recommended",
     ":pinDigestsDisabled",
-
     "workarounds:all"
   ],
   "enabledManagers": [
@@ -15,6 +14,11 @@
     "pip_requirements",
     "github-actions"
   ],
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "📦 Dependency Dashboard",
+  "abandonmentThreshold": "365",
+  "osvVulnerabilityAlerts": true,
+  "platformAutomerge": true,  
   "packageRules": [
     {
       "matchDatasources": [
@@ -95,6 +99,7 @@
       "security"
     ],
     "osvVulnerabilityAlerts": true,
-    "automerge": false
+    "automerge": true,
+    "enabled": true
   }
 }
