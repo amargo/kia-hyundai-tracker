@@ -24,6 +24,7 @@ def index():
         "/status": "Get detailed vehicle status (battery, range, charging state, etc.)",
         "/battery": "Get battery percentage",
         "/force_refresh": "Force refresh vehicle state",
+        "/force_trips": "Force refresh and save trip information to database",
         "/charge": "Control charging (parameters: action=[start|stop], synchronous=[true|false])"
     }
     return jsonify({
@@ -37,6 +38,35 @@ def force_refresh():
     vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
     vehicle_client.save_log()
     return jsonify({"action": "force_refresh", "status": "success"})
+
+@app.route("/force_trips")
+def force_trips():
+    """Force refresh and save trip information to database"""
+    try:
+        # First ensure we have fresh vehicle data
+        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        
+        # Process and save trips to database
+        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+            vehicle_client.process_trips()
+            return jsonify({
+                "action": "force_trips", 
+                "status": "success",
+                "message": "Trip information refreshed and saved to database"
+            })
+        else:
+            return jsonify({
+                "action": "force_trips", 
+                "status": "warning",
+                "message": "No daily stats available for trip processing"
+            })
+    except Exception as e:
+        logger.exception("Error during force trips operation:", exc_info=e)
+        return jsonify({
+            "action": "force_trips", 
+            "status": "error",
+            "message": f"Failed to process trips: {str(e)}"
+        }), 500
 
 @app.route("/status")
 def get_cached_status():
