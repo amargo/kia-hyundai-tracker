@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from DatabaseClient import DatabaseClient
 from hyundai_kia_connect_api import Vehicle, VehicleManager
-from hyundai_kia_connect_api.exceptions import RateLimitingError, APIError, RequestTimeoutError
+from hyundai_kia_connect_api.exceptions import RateLimitingError, APIError, RequestTimeoutError, AuthenticationError
 from Logger import Logger
 
 # Configure logger
@@ -55,6 +55,9 @@ class VehicleClient:
         self.ENGINE_RUNNING_FORCE_REFRESH_INTERVAL = 600
         self.DC_CHARGE_FORCE_REFRESH_INTERVAL = 1800
         self.AC_CHARGE_FORCE_REFRESH_INTERVAL = 1800
+
+        # Maximum number of retries for API calls
+        self.MAX_API_RETRIES = 1
 
         self.vm = VehicleManager(region=1, brand=1, username=os.environ["UVO_USERNAME"],
                                  password=os.environ["UVO_PASSWORD"],
@@ -171,10 +174,12 @@ class VehicleClient:
 
         today = datetime.date.today()
         for yyyymm in months_list:
-            try:
-                self.vm.update_month_trip_info(self.vehicle.id, yyyymm)
-            except Exception as e:
-                self.handle_api_exception(e)
+            result = self._retry_api_call(
+                self.vm.update_month_trip_info, 
+                self.vehicle.id, 
+                yyyymm
+            )
+            if result is None:
                 return
 
             if self.vehicle.month_trip_info is not None:
@@ -189,10 +194,12 @@ class VehicleClient:
                         if datetime.datetime.strptime(day.yyyymmdd, "%Y%m%d") < most_recent_trip:
                             continue
 
-                    try:
-                        self.vm.update_day_trip_info(self.vehicle.id, day.yyyymmdd)
-                    except Exception as e:
-                        self.handle_api_exception(e)
+                    result = self._retry_api_call(
+                        self.vm.update_day_trip_info,
+                        self.vehicle.id,
+                        day.yyyymmdd
+                    )
+                    if result is None:
                         return
 
                     # process and save trips for this day
@@ -216,22 +223,65 @@ class VehicleClient:
 
         self.db_client.save_log()
 
+    def _retry_api_call(self, api_function, *args, **kwargs):
+        """
+        Generic retry wrapper for API calls with token refresh capability
+        :param api_function: The API function to call
+        :param args: Arguments to pass to the API function
+        :param kwargs: Keyword arguments to pass to the API function
+        :return: Result of the API function or None if all retries failed
+        """
+        operation_name = getattr(api_function, '__name__', str(api_function))
+        retry_count = 0
+        while retry_count <= self.MAX_API_RETRIES:
+            try:
+                return api_function(*args, **kwargs)
+            except Exception as e:
+                should_retry = self.handle_api_exception(e)
+                if should_retry and retry_count < self.MAX_API_RETRIES:
+                    retry_count += 1
+                    self.logger.info(f"Retrying {operation_name} after token refresh (attempt {retry_count + 1})")
+                    continue
+                else:
+                    return None
+
     def handle_api_exception(self, exc: Exception):
         """
         In case of API error, this function defines what to do:
         - log error
         - sleep
+        - handle token refresh for authentication errors
         :param exc: the Exception returned by the library
         """
 
+        # authentication error: token expired, try to refresh
+        if isinstance(exc, AuthenticationError):
+            if "Token is expired" in str(exc):
+                self.logger.warning("Token expired, attempting to refresh...")
+                try:
+                    # Reset token to force re-authentication
+                    self.vm.token = None
+                    # Force refresh to get new token
+                    self.vm.check_and_refresh_token()
+                    self.logger.info("Token refreshed successfully")
+                    return True  # Indicate that retry is possible
+                except Exception as refresh_exc:
+                    self.logger.exception("Failed to refresh token:", exc_info=refresh_exc)
+                    self.db_client.log_error(exception=refresh_exc)
+                    return False
+            else:
+                self.logger.exception("Authentication error (not token expiry):", exc_info=exc)
+                self.db_client.log_error(exception=exc)
+                return False
+
         # rate limiting: we are blocked for 24 hours
-        if isinstance(exc, RateLimitingError):
+        elif isinstance(exc, RateLimitingError):
             self.logger.exception(
                 "we got rate limited, probably exceeded 200 requests. exiting",
                 exc_info=exc)
             self.db_client.log_error(exception=exc)
             # time.sleep(3600 * 4)
-            return
+            return False
 
         # request timeout: vehicle could not be reached.
         # to prevent too many unsuccessful requests in a row (which would lead to rate limiting) we sleep for a while.
@@ -241,14 +291,14 @@ class VehicleClient:
                 "that would lead to rate limiting ",
                 exc_info=exc)
             self.db_client.log_error(exception=exc)
-            return
+            return False
             # time.sleep(3600)
 
         # broad API error
         elif isinstance(exc, APIError):
             self.logger.exception("server responded with error:", exc_info=exc)
             self.db_client.log_error(exception=exc)
-            return
+            return False
             # self.logger.info("sleeping for 60 seconds before next attempt")
             # time.sleep(60)
 
@@ -256,7 +306,7 @@ class VehicleClient:
         else:
             self.logger.exception("generic error:", exc_info=exc)
             self.db_client.log_error(exception=exc)
-            return
+            return False
             # self.logger.info("sleeping for 60 seconds before next attempt")
             # time.sleep(60)
 
@@ -271,17 +321,20 @@ class VehicleClient:
         try:
             self.vm.check_and_refresh_token()
         except Exception as e:
-            self.handle_api_exception(e)
-            return
+            should_retry = self.handle_api_exception(e)
+            if not should_retry:
+                return
 
         self.vehicle = self.vm.get_vehicle(os.environ["UVO_VEHICLE_UUID"])
         # fetch cached status, but do not retrieve driving info (driving stats) just yet, to prevent making too
         # many API calls. yes, cached calls also increment the API limit counter.
 
-        try:
-            response = self.vm.api._get_cached_vehicle_state(self.vm.token, self.vehicle)
-        except Exception as e:
-            self.handle_api_exception(e)
+        response = self._retry_api_call(
+            self.vm.api._get_cached_vehicle_state,
+            self.vm.token,
+            self.vehicle
+        )
+        if response is None:
             return
 
         self.vm.api._update_vehicle_properties(self.vehicle, response)
@@ -294,16 +347,18 @@ class VehicleClient:
         last_db_odometer = self.db_client.get_last_update_odometer()
         if not last_db_odometer:
             self.logger.info("Saving log...")
-            self.save_log()            
-            
+            self.save_log()
+
         if last_db_odometer and self.vehicle.odometer > last_db_odometer:
             # it's not time to force refresh yet, but we might still have data on the server
             # that is more recent that our last saved data, so we save it
 
-            try:
-                response = self.vm.api._get_driving_info(self.vm.token, self.vehicle)
-            except Exception as e:
-                self.handle_api_exception(e)
+            response = self._retry_api_call(
+                self.vm.api._get_driving_info,
+                self.vm.token,
+                self.vehicle
+            )
+            if response is None:
                 return
 
             self.vm.api._update_vehicle_drive_info(self.vehicle, response)
