@@ -265,3 +265,65 @@ class DatabaseClient:
         ))
         conn.commit()
         conn.close()
+
+    def save_trip(self, day_date, trip):
+        """Save a single trip to the database, avoiding duplicates."""
+        conn = self.create_connection()
+        cur = conn.cursor()
+        
+        # Convert trip timestamp to unix timestamp for comparison
+        trip_unix_timestamp = None
+        if trip.hhmmss:
+            trip_datetime = self.vehicle_client._convert_trip_time_to_datetime(day_date, trip.hhmmss)
+            if trip_datetime:
+                trip_unix_timestamp = int(trip_datetime.timestamp())
+        
+        if trip_unix_timestamp:
+            # Check if this trip already exists
+            cur.execute("SELECT COUNT(*) FROM trips WHERE unix_timestamp = %s", (trip_unix_timestamp,))
+            if cur.fetchone()[0] > 0:
+                print(f"Trip already exists for timestamp {trip_unix_timestamp}, skipping...")
+                conn.close()
+                return
+        
+        # Insert new trip
+        sql = '''INSERT INTO trips(
+            unix_timestamp,
+            date,
+            driving_time_minutes,
+            idle_time_minutes,
+            distance_km,
+            avg_speed_kmh,
+            max_speed_kmh
+        ) VALUES(%s, %s, %s, %s, %s, %s, %s)'''
+        
+        # Get the full datetime with hour, minute, second for the date field
+        trip_datetime = self.vehicle_client._convert_trip_time_to_datetime(day_date, trip.hhmmss)
+        date_string = trip_datetime.strftime("%Y-%m-%d %H:%M") if trip_datetime else day_date.strftime("%Y-%m-%d")
+        
+        cur.execute(sql, (
+            trip_unix_timestamp,
+            date_string,
+            trip.drive_time if trip.drive_time else 0,
+            trip.idle_time if trip.idle_time else 0,
+            int(trip.distance) if trip.distance else 0,
+            int(trip.avg_speed) if trip.avg_speed else 0,
+            int(trip.max_speed) if trip.max_speed else 0
+        ))
+        
+        conn.commit()
+        conn.close()
+        print(f"Saved new trip for {day_date.strftime('%Y-%m-%d')}")
+
+    def get_most_recent_saved_trip_timestamp(self):
+        """Get the timestamp of the most recently saved trip."""
+        conn = self.create_connection()
+        cur = conn.cursor()
+        
+        cur.execute("SELECT MAX(unix_timestamp) FROM trips")
+        result = cur.fetchone()
+        conn.close()
+        
+        if result and result[0]:
+            return datetime.datetime.fromtimestamp(result[0])
+        return None

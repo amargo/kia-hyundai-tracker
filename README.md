@@ -6,11 +6,14 @@ Track your Kia/Hyundai vehicle using the Kia Connect / Bluelink API. This applic
 
 - Real-time vehicle status monitoring
 - Battery level and charging status tracking
-- Location tracking
+- Location tracking and trip history
+- Daily driving statistics collection
 - Configurable refresh intervals
 - REST API for easy integration
 - Support for both SQLite and MySQL databases
 - Grafana dashboard support
+- Automated trip processing and duplicate prevention
+- Comprehensive logging system
 
 ## Installation
 
@@ -138,11 +141,58 @@ UVO_DB_NAME=your-database
 
 ## Usage
 
+### Command Line Interface
+
+The application supports multiple actions via command line:
+
+```bash
+# Basic vehicle data refresh
+python main.py --action refresh --verbose
+
+# Process and save trip information only
+python main.py --action trips --verbose
+
+# Save daily statistics only
+python main.py --action daily_stats --verbose
+
+# Complete data collection (refresh + trips + daily stats + logs)
+python main.py --action all --verbose
+```
+
+#### Available Actions
+
+- **`refresh`** - Updates vehicle status, battery, location data
+- **`trips`** - Processes trip history with duplicate prevention
+- **`daily_stats`** - Saves daily driving statistics
+- **`all`** - Complete data collection including all above + log entries
+
+### Scheduling with Cron
+
+For automated data collection, set up cron jobs:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add these entries for automated collection:
+
+# Complete data collection every 6 hours
+0 */6 * * * cd /path/to/kia-hyundai-tracker && python main.py --action all --verbose >> /var/log/kia-tracker.log 2>&1
+
+# Trip processing every 2 hours (during day)
+0 8-22/2 * * * cd /path/to/kia-hyundai-tracker && python main.py --action trips --verbose >> /var/log/kia-tracker.log 2>&1
+
+# Daily stats once per day at 23:30
+30 23 * * * cd /path/to/kia-hyundai-tracker && python main.py --action daily_stats --verbose >> /var/log/kia-tracker.log 2>&1
+```
+
 ### HTTP API Endpoints
 
 - `/status` - Get detailed vehicle status
 - `/battery` - Get battery percentage
 - `/force_refresh` - Force refresh vehicle state
+- `/force_trips` - Manually trigger trip processing
+- `/force_daily_stats` - Manually save daily statistics
 - `/charge` - Control charging (start/stop)
 
 Example API calls:
@@ -174,6 +224,55 @@ docker run -d \
   --env-file .env \
   -v $(pwd)/database.db:/app/database.db \
   kia-hyundai-tracker
+```
+
+### Running CLI Commands in Docker
+
+The Docker container runs the HTTP server by default, but you can also execute CLI commands:
+
+```bash
+# Execute one-time CLI commands in running container
+docker exec kia-tracker python main.py --action all --verbose
+
+# Run CLI commands in a new container (without HTTP server)
+docker run --rm --env-file .env \
+  -v $(pwd)/database.db:/app/database.db \
+  kia-hyundai-tracker python main.py --action trips --verbose
+
+# Interactive shell for debugging
+docker exec -it kia-tracker /bin/bash
+```
+
+### Docker Scheduling Options
+
+#### Option 1: Use Docker with External Cron
+```bash
+# Add to host crontab for CLI-based scheduling
+0 */6 * * * docker exec kia-tracker python main.py --action all --verbose >> /var/log/kia-tracker.log 2>&1
+```
+
+#### Option 2: Use HTTP Server with Built-in Scheduling
+The HTTP server includes automatic scheduling:
+- **Vehicle refresh**: Every 30 minutes (configurable via `REFRESH_INTERVAL_MINUTES`)
+- **Trip processing**: Every 2 hours during day (8:00-22:00)
+- **Daily stats**: Once per day at 23:30
+
+```bash
+# Run with built-in scheduler (default behavior)
+docker run -d \
+  --name kia-tracker \
+  --restart unless-stopped \
+  -p 5000:5000 \
+  --env-file .env \
+  kia-hyundai-tracker
+```
+
+#### Option 3: Manual HTTP API Triggers
+```bash
+# Trigger operations via HTTP API
+curl http://localhost:5000/force_trips
+curl http://localhost:5000/force_daily_stats
+curl http://localhost:5000/force_refresh
 ```
 
 ## Contributing

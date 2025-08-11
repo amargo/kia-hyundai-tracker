@@ -143,6 +143,24 @@ class VehicleClient:
         print(f"Estimated charging power: {round(charging_power_in_kilowatts, 1)} kW")
         self.charging_power_in_kilowatts = round(charging_power_in_kilowatts, 1)
 
+    def _convert_trip_time_to_datetime(self, day_date, trip_hhmmss):
+        """
+        Convert trip time string (HHMMSS) to datetime object
+        :param day_date: datetime object for the day
+        :param trip_hhmmss: string in format "HHMMSS" (e.g., "132845")
+        :return: datetime object or None if invalid
+        """
+        if not trip_hhmmss or len(trip_hhmmss) != 6:
+            return None
+        
+        try:
+            hours = int(trip_hhmmss[:2])
+            minutes = int(trip_hhmmss[2:4])
+            seconds = int(trip_hhmmss[4:])
+            return day_date + datetime.timedelta(hours=hours, minutes=minutes, seconds=seconds)
+        except (ValueError, IndexError):
+            return None
+
     def process_trips(self):
         """
         Get, process and save trip info
@@ -174,13 +192,16 @@ class VehicleClient:
 
         today = datetime.date.today()
         for yyyymm in months_list:
-            result = self._retry_api_call(
-                self.vm.update_month_trip_info, 
-                self.vehicle.id, 
-                yyyymm
-            )
-            if result is None:
-                return
+            try:
+                self._retry_api_call(
+                    self.vm.update_month_trip_info, 
+                    self.vehicle.id, 
+                    yyyymm
+                )
+                self.logger.info(f"Successfully updated month trip info for {yyyymm}")
+            except Exception as e:
+                self.logger.error(f"Error updating month trip info for {yyyymm}: {str(e)}")
+                continue
 
             if self.vehicle.month_trip_info is not None:
                 for day in self.vehicle.month_trip_info.day_list:  # ordered on day
@@ -194,19 +215,39 @@ class VehicleClient:
                         if datetime.datetime.strptime(day.yyyymmdd, "%Y%m%d") < most_recent_trip:
                             continue
 
-                    result = self._retry_api_call(
-                        self.vm.update_day_trip_info,
-                        self.vehicle.id,
-                        day.yyyymmdd
-                    )
-                    if result is None:
-                        return
+                    try:
+                        self._retry_api_call(
+                            self.vm.update_day_trip_info,
+                            self.vehicle.id,
+                            day.yyyymmdd
+                        )
+                        self.logger.info(f"Successfully updated day trip info for {day.yyyymmdd}")
+                    except Exception as e:
+                        self.logger.error(f"Error updating day trip info for {day.yyyymmdd}: {str(e)}")
+                        continue
 
                     # process and save trips for this day
                     if self.vehicle.day_trip_info is not None:
                         day_date = datetime.datetime.strptime(self.vehicle.day_trip_info.yyyymmdd, "%Y%m%d")
+                        
+                        # Get the most recent saved trip timestamp to avoid duplicates
+                        most_recent_saved_trip = self.db_client.get_most_recent_saved_trip_timestamp()
+                        
+                        trips_saved = 0
                         for trip in reversed(self.vehicle.day_trip_info.trip_list):  # show oldest first
+                            # Skip trips that are older than or equal to the most recent saved trip
+                            if most_recent_saved_trip and trip.hhmmss:
+                                trip_datetime = self._convert_trip_time_to_datetime(day_date, trip.hhmmss)
+                                if trip_datetime and trip_datetime <= most_recent_saved_trip:
+                                    continue
+                            
                             self.db_client.save_trip(day_date, trip)
+                            trips_saved += 1
+                        
+                        if trips_saved > 0:
+                            self.logger.info(f"Saved {trips_saved} new trips for {day_date.strftime('%Y-%m-%d')}")
+                        else:
+                            self.logger.info(f"No new trips to save for {day_date.strftime('%Y-%m-%d')}")
 
     def save_log(self):
 
