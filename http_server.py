@@ -25,6 +25,7 @@ def index():
         "/battery": "Get battery percentage",
         "/force_refresh": "Force refresh vehicle state",
         "/force_trips": "Force refresh and save trip information to database",
+        "/force_daily_stats": "Force save daily statistics to database",
         "/charge": "Control charging (parameters: action=[start|stop], synchronous=[true|false])"
     }
     return jsonify({
@@ -45,27 +46,56 @@ def force_trips():
     try:
         # First ensure we have fresh vehicle data
         vehicle_client.vm.update_all_vehicles_with_cached_state()
-        
+
         # Process and save trips to database
         if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
             vehicle_client.process_trips()
             return jsonify({
-                "action": "force_trips", 
+                "action": "force_trips",
                 "status": "success",
-                "message": "Trip information refreshed and saved to database"
+                "message": "Trip information refreshed and individual trips saved to database"
             })
         else:
             return jsonify({
-                "action": "force_trips", 
+                "action": "force_trips",
                 "status": "warning",
                 "message": "No daily stats available for trip processing"
             })
     except Exception as e:
         logger.exception("Error during force trips operation:", exc_info=e)
         return jsonify({
-            "action": "force_trips", 
+            "action": "force_trips",
             "status": "error",
             "message": f"Failed to process trips: {str(e)}"
+        }), 500
+
+@app.route("/force_daily_stats")
+def force_daily_stats():
+    """Force save daily statistics to database"""
+    try:
+        # First ensure we have fresh vehicle data
+        vehicle_client.vm.update_all_vehicles_with_cached_state()
+
+        # Save daily statistics to database
+        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+            vehicle_client.db_client.save_daily_stats()
+            return jsonify({
+                "action": "force_daily_stats",
+                "status": "success",
+                "message": "Daily statistics saved to database"
+            })
+        else:
+            return jsonify({
+                "action": "force_daily_stats",
+                "status": "warning",
+                "message": "No daily stats available to save"
+            })
+    except Exception as e:
+        logger.exception("Error during force daily stats operation:", exc_info=e)
+        return jsonify({
+            "action": "force_daily_stats",
+            "status": "error",
+            "message": f"Failed to save daily stats: {str(e)}"
         }), 500
 
 @app.route("/status")
@@ -164,40 +194,76 @@ def update_vehicle_state():
 
 def scheduled_refresh():
     """Perform scheduled refresh if within active hours and auxiliary battery is OK"""
-    if not is_within_active_hours():
-        return
-
     try:
-        vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
+        if not is_within_active_hours():
+            logger.info("Outside active hours, skipping scheduled refresh")
+            return
 
         if not is_aux_battery_ok():
-            logger.warning(f"Auxiliary battery SOC ({vehicle_client.vehicle.car_battery_percentage}%) is below minimum threshold ({get_min_aux_battery_soc()}%), skipping refresh")
+            logger.info("Auxiliary battery level too low, skipping scheduled refresh")
             return
 
-        logger.info("=== Starting scheduled refresh ===")
-        logger.info("Step 1/2: Requesting fresh data from vehicle...")
-        update_vehicle_state()
-        logger.info("Step 1/2: Successfully received fresh data from vehicle")
-    except InvalidAPIResponseError:
-        logger.warning("Token expired, attempting to refresh...")
+        logger.info("Starting scheduled refresh")
+        
+        # Step 1: Update vehicle state
         try:
-            vehicle_client.vm.check_and_refresh_token()
             update_vehicle_state()
-            logger.info("Successfully refreshed token and updated vehicle state")
-        except Exception as refresh_error:
-            logger.error(f"Failed to refresh token or update vehicle state: {str(refresh_error)}")
+            logger.info("Step 1/2: Vehicle state updated successfully")
+        except Exception as e:
+            logger.error(f"Step 1/2: Failed to update vehicle state: {str(e)}")
             return
-    except Exception as e:
-        logger.error(f"Failed during vehicle refresh: {str(e)}")
-        return
 
-    try:
-        logger.info("Step 2/2: Processing and saving vehicle data...")
-        vehicle_client.refresh()
-        logger.info("Step 2/2: Successfully processed and saved vehicle data")
-        logger.info("=== Scheduled refresh completed successfully ===")
+        # Step 2: Process and save data
+        try:
+            if vehicle_client.vehicle:
+                # Save current state to database
+                vehicle_client.save_log()
+                logger.info("Step 2/2: Vehicle data processed and saved successfully")
+            else:
+                logger.warning("Step 2/2: No vehicle data available to process")
+        except Exception as e:
+            logger.error(f"Step 2/2: Failed to process vehicle data: {str(e)}")
+        
+        logger.info("Scheduled refresh completed")
+        
     except Exception as e:
-        logger.error(f"Step 2/2: Failed to process vehicle data: {str(e)}")
+        logger.error(f"Scheduled refresh failed: {str(e)}")
+
+def scheduled_trip_processing():
+    """Scheduled trip processing - runs every 2 hours during day"""
+    try:
+        logger.info("Starting scheduled trip processing")
+        
+        # Ensure we have fresh vehicle data
+        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        
+        # Process trips if data is available
+        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+            vehicle_client.process_trips()
+            logger.info("Scheduled trip processing completed successfully")
+        else:
+            logger.warning("No trip data available for scheduled processing")
+            
+    except Exception as e:
+        logger.error(f"Scheduled trip processing failed: {str(e)}")
+
+def scheduled_daily_stats():
+    """Scheduled daily stats saving - runs once per day at 23:30"""
+    try:
+        logger.info("Starting scheduled daily stats saving")
+        
+        # Ensure we have fresh vehicle data
+        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        
+        # Save daily stats if data is available
+        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+            vehicle_client.db_client.save_daily_stats()
+            logger.info("Scheduled daily stats saving completed successfully")
+        else:
+            logger.warning("No daily stats data available for scheduled saving")
+            
+    except Exception as e:
+        logger.error(f"Scheduled daily stats saving failed: {str(e)}")
 
 if __name__ == "__main__":
     # Load environment variables
@@ -210,7 +276,15 @@ if __name__ == "__main__":
     else:
         scheduler = BackgroundScheduler()
     refresh_interval = int(os.getenv('REFRESH_INTERVAL_MINUTES', '30'))
+    # Add scheduled jobs
     scheduler.add_job(scheduled_refresh, 'interval', minutes=refresh_interval)
+    
+    # Add trip processing job - every 2 hours during day
+    scheduler.add_job(scheduled_trip_processing, 'cron', hour='8-22/2', minute=0)
+    
+    # Add daily stats job - once per day at 23:30
+    scheduler.add_job(scheduled_daily_stats, 'cron', hour=23, minute=30)
+    
     scheduler.start()
 
     try:

@@ -7,7 +7,12 @@ from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
 
 from DatabaseClient import DatabaseClient
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'custom_hyundai_kia_connect_api'))
+
 from hyundai_kia_connect_api import Vehicle, VehicleManager
+from custom_hyundai_kia_connect_api.KiaUvoApiEU import KiaUvoApiEU
 from hyundai_kia_connect_api.exceptions import RateLimitingError, APIError, RequestTimeoutError, AuthenticationError
 from Logger import Logger
 
@@ -59,9 +64,46 @@ class VehicleClient:
         # Maximum number of retries for API calls
         self.MAX_API_RETRIES = 1
 
-        self.vm = VehicleManager(region=1, brand=1, username=os.environ["UVO_USERNAME"],
-                                 password=os.environ["UVO_PASSWORD"],
-                                 pin=os.environ["UVO_PIN"])
+        # Use direct KiaUvoApiEU to bypass VehicleManager initialization issues
+        use_direct_api = os.getenv("UVO_USE_DIRECT_API", "True").lower() in ("true", "1", "yes")
+        
+        if use_direct_api:
+            self._init_direct_api()
+        else:
+            self._init_vehicle_manager()
+
+    def _init_direct_api(self):
+        """Initialize using direct KiaUvoApiEU to bypass authentication issues"""
+        self.api = KiaUvoApiEU(region=1, brand=1, language="en")
+        self.token = self.api.login(os.environ["UVO_USERNAME"], os.environ["UVO_PASSWORD"])
+        
+        if self.token is None:
+            raise RuntimeError("KiaUvoApiEU.login() did not return a valid token. Check credentials!")
+            
+        self.vehicles = self.api.get_vehicles(self.token)
+        
+        # Set up VehicleManager with working API and token
+        self.vm = VehicleManager(
+            region=1,
+            brand=1,
+            username=os.environ["UVO_USERNAME"],
+            password=os.environ["UVO_PASSWORD"],
+            pin=os.getenv("UVO_PIN", "")
+        )
+        self.vm.api = self.api
+        self.vm.token = self.token
+        self.vm.vehicles = {v.id: v for v in self.vehicles}
+
+    def _init_vehicle_manager(self):
+        """Initialize using standard VehicleManager (fallback)"""
+        self.vm = VehicleManager(
+            region=1,
+            brand=1,
+            username=os.environ["UVO_USERNAME"],
+            password=os.environ["UVO_PASSWORD"],
+            # EU accounts typically do not require a PIN; default to empty if not provided
+            pin=os.getenv("UVO_PIN", "")
+        )
 
     def get_estimated_charging_power(self):
         """
@@ -72,6 +114,10 @@ class VehicleClient:
         - charging time remaining as reported by the car
         :return:
         """
+        if not self.vehicle or not hasattr(self.vehicle, 'ev_battery_is_charging'):
+            self.logger.info("Vehicle not available or missing charging attributes; skipping power estimation")
+            self.charging_power_in_kilowatts = 0
+            return 0
 
         if not self.vehicle.ev_battery_is_charging:
             return 0
@@ -250,6 +296,13 @@ class VehicleClient:
                             self.logger.info(f"No new trips to save for {day_date.strftime('%Y-%m-%d')}")
 
     def save_log(self):
+        if not self.vehicle:
+            self.logger.warning("save_log called without a valid vehicle; skipping")
+            return
+
+        if not hasattr(self.vehicle, 'ev_battery_is_charging'):
+            self.logger.warning("Vehicle missing expected attributes; skipping save_log")
+            return
 
         if self.vehicle.ev_battery_is_charging:
 
@@ -413,9 +466,14 @@ class VehicleClient:
         db_last_update_ts = self.db_client.get_last_update_timestamp()
 
         # if vehicle state has changed, then save an entry
-        if self.vehicle.last_updated_at.replace(tzinfo=None) > db_last_update_ts:
+        if hasattr(self.vehicle, 'last_updated_at') and self.vehicle.last_updated_at and \
+                self.vehicle.last_updated_at.replace(tzinfo=None) > db_last_update_ts:
             self.logger.info("Cached data found, saving log...")
             self.save_log()
+
+        if not hasattr(self.vehicle, 'last_updated_at') or not self.vehicle.last_updated_at:
+            self.logger.warning("Vehicle missing last_updated_at; skipping force refresh decision")
+            return
 
         delta = datetime.datetime.now() - self.vehicle.last_updated_at.replace(tzinfo=None)
 
