@@ -16,6 +16,29 @@ app = Flask(__name__)
 vehicle_client = None
 logger = Logger.get_logger(__name__)
 
+def safe_update_vehicle_state():
+    """
+    Safely update vehicle state with automatic token refresh on expiry
+    Returns True on success, False on failure
+    """
+    try:
+        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        return True
+    except Exception as e:
+        # If token expired or other error, try to refresh
+        should_retry = vehicle_client.handle_api_exception(e)
+        if should_retry:
+            try:
+                # Retry after token refresh
+                vehicle_client.vm.update_all_vehicles_with_cached_state()
+                return True
+            except Exception as retry_e:
+                logger.exception("Failed to update vehicle state even after token refresh:", exc_info=retry_e)
+                return False
+        else:
+            logger.exception("Failed to update vehicle state:", exc_info=e)
+            return False
+
 @app.route("/")
 def index():
     """List all available endpoints"""
@@ -45,7 +68,12 @@ def force_trips():
     """Force refresh and save trip information to database"""
     try:
         # First ensure we have fresh vehicle data
-        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        if not safe_update_vehicle_state():
+            return jsonify({
+                "action": "force_trips",
+                "status": "error",
+                "message": "Failed to update vehicle state"
+            }), 500
 
         # Process and save trips to database
         if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
@@ -74,7 +102,12 @@ def force_daily_stats():
     """Force save daily statistics to database"""
     try:
         # First ensure we have fresh vehicle data
-        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        if not safe_update_vehicle_state():
+            return jsonify({
+                "action": "force_daily_stats",
+                "status": "error",
+                "message": "Failed to update vehicle state"
+            }), 500
 
         # Save daily statistics to database
         if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
@@ -100,7 +133,11 @@ def force_daily_stats():
 
 @app.route("/status")
 def get_cached_status():
-    vehicle_client.vm.update_all_vehicles_with_cached_state()
+    if not safe_update_vehicle_state():
+        return jsonify({
+            "status": "error",
+            "message": "Failed to update vehicle state"
+        }), 500
 
     # Convert both timestamps to UTC for comparison
     last_vehicle_update = vehicle_client.vehicle.last_updated_at
@@ -130,7 +167,8 @@ def get_cached_status():
 
 @app.route("/battery")
 def get_battery_soc():
-    vehicle_client.vm.update_all_vehicles_with_cached_state()
+    if not safe_update_vehicle_state():
+        return "Error: Failed to update vehicle state", 500
 
     # Convert both timestamps to UTC for comparison
     last_vehicle_update = vehicle_client.vehicle.last_updated_at
@@ -235,7 +273,9 @@ def scheduled_trip_processing():
         logger.info("Starting scheduled trip processing")
         
         # Ensure we have fresh vehicle data
-        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        if not safe_update_vehicle_state():
+            logger.error("Failed to update vehicle state for scheduled trip processing")
+            return
         
         # Process trips if data is available
         if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
@@ -253,7 +293,9 @@ def scheduled_daily_stats():
         logger.info("Starting scheduled daily stats saving")
         
         # Ensure we have fresh vehicle data
-        vehicle_client.vm.update_all_vehicles_with_cached_state()
+        if not safe_update_vehicle_state():
+            logger.error("Failed to update vehicle state for scheduled daily stats")
+            return
         
         # Save daily stats if data is available
         if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
@@ -290,6 +332,7 @@ if __name__ == "__main__":
     try:
         # Initialize vehicle client
         vehicle_client = VehicleClient()
+
         while True:
             try:
                 vehicle_client.vm.check_and_refresh_token()
