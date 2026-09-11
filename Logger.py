@@ -1,7 +1,9 @@
 import logging
-import coloredlogs
 import os
+
+import coloredlogs
 from dotenv import load_dotenv
+
 
 class Logger:
     _instance = None
@@ -9,23 +11,23 @@ class Logger:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(Logger, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
         if not Logger._initialized:
             load_dotenv()
-            debug_mode = os.getenv('DEBUG', 'false').lower() == 'true'
-            
+            debug_mode = os.getenv("DEBUG", "false").lower() == "true"
+
             # Configure root logger
             self.logger = logging.getLogger()
             coloredlogs.install(
-                level='DEBUG' if debug_mode else 'INFO',
+                level="DEBUG" if debug_mode else "INFO",
                 logger=self.logger,
                 isatty=True,
-                fmt='%(asctime)s %(name)s[%(process)d] %(levelname)s %(message)s'
+                fmt="%(asctime)s %(name)s[%(process)d] %(levelname)s %(message)s",
             )
-            
+
             Logger._initialized = True
 
     @staticmethod
