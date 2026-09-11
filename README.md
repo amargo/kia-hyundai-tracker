@@ -9,8 +9,8 @@ Track your Kia/Hyundai vehicle using the Kia Connect / Bluelink API. This applic
 - Location tracking and trip history
 - Daily driving statistics collection
 - Configurable refresh intervals
-- REST API for easy integration
-- Support for both SQLite and MySQL databases
+- REST API for easy integration, optionally token-protected
+- MySQL/MariaDB storage (auto-creates its schema on first run)
 - Grafana dashboard support
 - Automated trip processing and duplicate prevention
 - Comprehensive logging system
@@ -89,6 +89,9 @@ docker run -d \
   gszoboszlai/kia-hyundai-tracker:latest
 ```
 
+All state lives in the MySQL/MariaDB database pointed to by `UVO_DB_*` - the
+container itself is stateless, no volume needed.
+
 ### Manual Installation
 
 1. Clone the repository:
@@ -120,18 +123,28 @@ The application is configured using environment variables. Here are the key sett
 
 ### Required Settings
 - `UVO_USERNAME`: Your Kia Connect/Bluelink email
-- `UVO_PASSWORD`: Your Kia Connect/Bluelink password
+- `UVO_PASSWORD`: Your Kia Connect/Bluelink password - the actual account password,
+  not a token. If you previously used a helper script that produced a long
+  refresh-token-looking string, replace it with your real password: the app logs in
+  through Kia/Hyundai's OneApp/CCI flow directly.
 - `UVO_VEHICLE_UUID`: Your vehicle's UUID
 - `UVO_PIN`: Your Kia Connect/Bluelink PIN code
 
 ### Optional Settings
+- `UVO_KIA_LANGUAGE`: Language for the UVO/Bluelink API (default: `en`)
 - `REFRESH_START_HOUR`: Start hour for vehicle updates (default: 7)
 - `REFRESH_END_HOUR`: End hour for vehicle updates (default: 22)
 - `REFRESH_INTERVAL_MINUTES`: Minutes between updates (default: 30)
-- `HTTP_SERVER_PASSWORD`: Password for the HTTP API
+- `MIN_AUX_BATTERY_SOC`: Skip scheduled refreshes below this 12V battery level, floored
+  at 60 (default: 80)
+- `UVO_TRACKER_TIMEZONE`: Timezone for the background scheduler and for deciding where
+  a day starts/ends when saving daily stats (default: `Europe/Budapest`)
+- `HTTP_SERVER_PASSWORD`: Token required by every `http_server.py` endpoint - see
+  [Security](#security) below. Leave unset only on a network you fully trust.
 
 ### Database Configuration
-By default, SQLite is used. For MySQL:
+Only MySQL/MariaDB is supported; the schema is created automatically on first run
+from [`db/db_schema.sql`](db/db_schema.sql).
 ```env
 UVO_DB_HOST=your-mysql-host
 UVO_DB_USER=your-username
@@ -176,7 +189,10 @@ crontab -e
 
 # Add these entries for automated collection:
 
-# Complete data collection every 6 hours
+# Complete data collection every 6 hours with Docker
+0 */6 * * * /usr/bin/docker pull ghcr.io/amargo/kia-hyundai-tracker:latest && /usr/bin/docker run --rm --env-file /path/to/.env ghcr.io/amargo/kia-hyundai-tracker:latest python main.py --action all --verbose
+
+# Or using local installation
 0 */6 * * * cd /path/to/kia-hyundai-tracker && python main.py --action all --verbose >> /var/log/kia-tracker.log 2>&1
 
 # Trip processing every 2 hours (during day)
@@ -194,6 +210,9 @@ crontab -e
 - `/force_trips` - Manually trigger trip processing
 - `/force_daily_stats` - Manually save daily statistics
 - `/charge` - Control charging (start/stop)
+
+If `HTTP_SERVER_PASSWORD` is set, every call below also needs it - see
+[Security](#security).
 
 Example API calls:
 ```bash
@@ -222,7 +241,6 @@ docker run -d \
   --restart unless-stopped \
   -p 5000:5000 \
   --env-file .env \
-  -v $(pwd)/database.db:/app/database.db \
   kia-hyundai-tracker
 ```
 
@@ -236,7 +254,6 @@ docker exec kia-tracker python main.py --action all --verbose
 
 # Run CLI commands in a new container (without HTTP server)
 docker run --rm --env-file .env \
-  -v $(pwd)/database.db:/app/database.db \
   kia-hyundai-tracker python main.py --action trips --verbose
 
 # Interactive shell for debugging
@@ -274,6 +291,53 @@ curl http://localhost:5000/force_trips
 curl http://localhost:5000/force_daily_stats
 curl http://localhost:5000/force_refresh
 ```
+
+## Security
+
+`/charge` can start or stop charging, `/force_refresh` wakes the car, and the other
+endpoints read live vehicle data - none of them are safe to leave open on an untrusted
+network.
+
+Set `HTTP_SERVER_PASSWORD` in `.env` and every endpoint (including `/`) starts
+requiring it, as any of:
+```bash
+curl -H "Authorization: Bearer $HTTP_SERVER_PASSWORD" http://localhost:5000/status
+curl -H "X-Api-Key: $HTTP_SERVER_PASSWORD" http://localhost:5000/status
+curl "http://localhost:5000/status?password=$HTTP_SERVER_PASSWORD"
+```
+Leaving it unset keeps every endpoint open with no authentication at all - only do
+that when the container is reachable exclusively from a network you trust (e.g. bound
+to `127.0.0.1` or kept off any port that isn't purely internal).
+
+Do not set `FLASK_DEBUG=true` on a reachable host: it enables the Werkzeug debugger,
+which allows arbitrary code execution from the browser.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+ruff check main.py VehicleClient.py DatabaseClient.py http_server.py Logger.py tests/
+ruff format --check main.py VehicleClient.py DatabaseClient.py http_server.py Logger.py tests/
+pytest -q
+```
+
+The SQL-parameter builders (`DatabaseClient.build_log_params`,
+`build_daily_stat_params`, `build_trip_params`) and `VehicleClient`'s pure logic
+(charging power estimate, trip time parsing, retry/token-refresh behavior) are
+separated from the database and network calls so they can be unit tested without
+credentials or a live database.
+
+### Notes on past data
+
+- Rows in `stats_per_day` saved before this project switched to computing
+  `average_consumption_kwh` as `total_consumed / distance * 100` (instead of the
+  reciprocal-ish `total_consumed / (100 / distance)`) will be off by roughly the
+  square of `distance / 100` - only exactly correct for a day with precisely 100 km
+  driven. New rows are correct; old ones are not retroactively fixed.
+- This project no longer vendors its own copy of `KiaUvoApiEU.py`; it relies on
+  `hyundai_kia_connect_api` (currently 4.30.0) directly, which uses the OneApp/CCI
+  login flow instead of the older IDPConnect flow the vendored copy implemented.
+  `UVO_PASSWORD` must be your real account password for this to work.
 
 ## Contributing
 
