@@ -16,9 +16,9 @@
   ],
   "dependencyDashboard": true,
   "dependencyDashboardTitle": "📦 Dependency Dashboard",
-  "abandonmentThreshold": "365",
+  "abandonmentThreshold": "1 year",
   "osvVulnerabilityAlerts": true,
-  "platformAutomerge": true,  
+  "platformAutomerge": true,
   "packageRules": [
     {
       "matchDatasources": [

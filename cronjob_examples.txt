@@ -1,0 +1,38 @@
+# Kia Hyundai Tracker - Cronjob Examples
+# Replace /path/to/your/project with your actual project path
+# Replace /path/to/python with your Python executable path
+
+# Basic vehicle data refresh every 15 minutes
+*/15 * * * * cd /path/to/your/project && /path/to/python main.py --action refresh
+
+# Process trips every hour
+0 * * * * cd /path/to/your/project && /path/to/python main.py --action trips --verbose
+
+# Save daily statistics once per day at 23:30
+30 23 * * * cd /path/to/your/project && /path/to/python main.py --action daily_stats --verbose
+
+# Full refresh (all data) once per day at 06:00
+0 6 * * * cd /path/to/your/project && /path/to/python main.py --action all --verbose
+
+# Windows Task Scheduler Examples (for Windows users):
+# Use these commands in Windows Task Scheduler instead of cron
+
+# Basic refresh every 15 minutes:
+# Program: C:\path\to\python.exe
+# Arguments: main.py --action refresh
+# Start in: C:\path\to\your\project
+
+# Process trips every hour:
+# Program: C:\path\to\python.exe  
+# Arguments: main.py --action trips --verbose
+# Start in: C:\path\to\your\project
+
+# Daily stats at 23:30:
+# Program: C:\path\to\python.exe
+# Arguments: main.py --action daily_stats --verbose
+# Start in: C:\path\to\your\project
+
+# Full refresh at 06:00:
+# Program: C:\path\to\python.exe
+# Arguments: main.py --action all --verbose
+# Start in: C:\path\to\your\project

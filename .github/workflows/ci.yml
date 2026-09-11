@@ -6,6 +6,8 @@ on:
     branches: [ main ]
     paths:
       - '**.py'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
       - 'Dockerfile'
       - '.dockerignore'
       - '.github/workflows/**'
@@ -13,6 +15,8 @@ on:
     branches: [ main ]
     paths:
       - '**.py'
+      - 'requirements*.txt'
+      - 'pyproject.toml'
       - 'Dockerfile'
       - '.dockerignore'
       - '.github/workflows/**'
@@ -20,14 +24,40 @@ on:
     types: [published]
 
 jobs:
+  lint-and-test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check main.py VehicleClient.py DatabaseClient.py http_server.py Logger.py tests/
+
+      - name: Ruff format check
+        run: ruff format --check main.py VehicleClient.py DatabaseClient.py http_server.py Logger.py tests/
+
+      - name: Pytest
+        run: pytest -q
+
   build-and-push-docker-image:
     name: Build image
+    needs: lint-and-test
     runs-on: ubuntu-latest
     env:
       IMAGE_NAME: kia-hyundai-tracker
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Docker meta
         id: meta
