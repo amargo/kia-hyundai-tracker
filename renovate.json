@@ -9,6 +9,10 @@
     ":pinDigestsDisabled",
     "workarounds:all"
   ],
+  "timezone": "Europe/Budapest",
+  "schedule": [
+    "on friday"
+  ],
   "enabledManagers": [
     "dockerfile",
     "pip_requirements",
