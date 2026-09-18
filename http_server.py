@@ -1,20 +1,54 @@
 import os
 import time
-import threading
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
-from hyundai_kia_connect_api.exceptions import RateLimitingError, InvalidAPIResponseError
+from hyundai_kia_connect_api.exceptions import RateLimitingError
 from pytz import timezone as pytz_timezone
-from datetime import datetime, timezone
-from VehicleClient import VehicleClient
+
 from Logger import Logger
+from VehicleClient import VehicleClient
 
 app = Flask(__name__)
 
 vehicle_client = None
 logger = Logger.get_logger(__name__)
+
+
+def _truthy(value: str) -> bool:
+    """Parse a query-string flag. bool("false") is True, so this can't use bool()."""
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _http_server_password() -> str | None:
+    return os.environ.get("HTTP_SERVER_PASSWORD") or None
+
+
+@app.before_request
+def require_auth():
+    """
+    Gate every endpoint behind HTTP_SERVER_PASSWORD when it is configured.
+
+    Accepts "Authorization: Bearer <token>", "X-Api-Key: <token>", or a
+    "?password=<token>" query parameter (for quick curl/browser use). When
+    HTTP_SERVER_PASSWORD is unset, no check is performed - this keeps existing
+    deployments that never set it working exactly as before.
+    """
+    expected = _http_server_password()
+    if not expected:
+        return None
+
+    provided = request.args.get("password") or request.headers.get("X-Api-Key")
+    auth_header = request.headers.get("Authorization", "")
+    if not provided and auth_header.startswith("Bearer "):
+        provided = auth_header[len("Bearer ") :]
+
+    if provided != expected:
+        return jsonify({"status": "error", "message": "Unauthorized"}), 401
+    return None
+
 
 def safe_update_vehicle_state():
     """
@@ -39,6 +73,7 @@ def safe_update_vehicle_state():
             logger.exception("Failed to update vehicle state:", exc_info=e)
             return False
 
+
 @app.route("/")
 def index():
     """List all available endpoints"""
@@ -49,19 +84,33 @@ def index():
         "/force_refresh": "Force refresh vehicle state",
         "/force_trips": "Force refresh and save trip information to database",
         "/force_daily_stats": "Force save daily statistics to database",
-        "/charge": "Control charging (parameters: action=[start|stop], synchronous=[true|false])"
+        "/charge": "Control charging (parameters: action=[start|stop], synchronous=[true|false])",
     }
-    return jsonify({
-        "available_endpoints": endpoints,
-        "note": "All endpoints return JSON except /battery which returns plain text"
-    })
+    return jsonify(
+        {
+            "available_endpoints": endpoints,
+            "note": "All endpoints return JSON except /battery which returns plain text",
+        }
+    )
+
 
 @app.route("/force_refresh")
 def force_refresh():
-    vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
-    vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
-    vehicle_client.save_log()
-    return jsonify({"action": "force_refresh", "status": "success"})
+    try:
+        vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
+        vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
+        vehicle_client.save_log()
+        return jsonify({"action": "force_refresh", "status": "success"})
+    except Exception as e:
+        logger.exception("Error during force refresh:", exc_info=e)
+        return jsonify(
+            {
+                "action": "force_refresh",
+                "status": "error",
+                "message": f"Failed to force refresh: {str(e)}",
+            }
+        ), 500
+
 
 @app.route("/force_trips")
 def force_trips():
@@ -69,33 +118,46 @@ def force_trips():
     try:
         # First ensure we have fresh vehicle data
         if not safe_update_vehicle_state():
-            return jsonify({
-                "action": "force_trips",
-                "status": "error",
-                "message": "Failed to update vehicle state"
-            }), 500
+            return jsonify(
+                {
+                    "action": "force_trips",
+                    "status": "error",
+                    "message": "Failed to update vehicle state",
+                }
+            ), 500
 
         # Process and save trips to database
-        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+        if (
+            vehicle_client.vehicle
+            and hasattr(vehicle_client.vehicle, "daily_stats")
+            and vehicle_client.vehicle.daily_stats
+        ):
             vehicle_client.process_trips()
-            return jsonify({
-                "action": "force_trips",
-                "status": "success",
-                "message": "Trip information refreshed and individual trips saved to database"
-            })
+            return jsonify(
+                {
+                    "action": "force_trips",
+                    "status": "success",
+                    "message": "Trip information refreshed and individual trips saved to database",
+                }
+            )
         else:
-            return jsonify({
-                "action": "force_trips",
-                "status": "warning",
-                "message": "No daily stats available for trip processing"
-            })
+            return jsonify(
+                {
+                    "action": "force_trips",
+                    "status": "warning",
+                    "message": "No daily stats available for trip processing",
+                }
+            )
     except Exception as e:
         logger.exception("Error during force trips operation:", exc_info=e)
-        return jsonify({
-            "action": "force_trips",
-            "status": "error",
-            "message": f"Failed to process trips: {str(e)}"
-        }), 500
+        return jsonify(
+            {
+                "action": "force_trips",
+                "status": "error",
+                "message": f"Failed to process trips: {str(e)}",
+            }
+        ), 500
+
 
 @app.route("/force_daily_stats")
 def force_daily_stats():
@@ -103,50 +165,60 @@ def force_daily_stats():
     try:
         # First ensure we have fresh vehicle data
         if not safe_update_vehicle_state():
-            return jsonify({
-                "action": "force_daily_stats",
-                "status": "error",
-                "message": "Failed to update vehicle state"
-            }), 500
+            return jsonify(
+                {
+                    "action": "force_daily_stats",
+                    "status": "error",
+                    "message": "Failed to update vehicle state",
+                }
+            ), 500
 
         # Save daily statistics to database
-        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+        if (
+            vehicle_client.vehicle
+            and hasattr(vehicle_client.vehicle, "daily_stats")
+            and vehicle_client.vehicle.daily_stats
+        ):
             vehicle_client.db_client.save_daily_stats()
-            return jsonify({
-                "action": "force_daily_stats",
-                "status": "success",
-                "message": "Daily statistics saved to database"
-            })
+            return jsonify(
+                {
+                    "action": "force_daily_stats",
+                    "status": "success",
+                    "message": "Daily statistics saved to database",
+                }
+            )
         else:
-            return jsonify({
-                "action": "force_daily_stats",
-                "status": "warning",
-                "message": "No daily stats available to save"
-            })
+            return jsonify(
+                {
+                    "action": "force_daily_stats",
+                    "status": "warning",
+                    "message": "No daily stats available to save",
+                }
+            )
     except Exception as e:
         logger.exception("Error during force daily stats operation:", exc_info=e)
-        return jsonify({
-            "action": "force_daily_stats",
-            "status": "error",
-            "message": f"Failed to save daily stats: {str(e)}"
-        }), 500
+        return jsonify(
+            {
+                "action": "force_daily_stats",
+                "status": "error",
+                "message": f"Failed to save daily stats: {str(e)}",
+            }
+        ), 500
+
 
 @app.route("/status")
 def get_cached_status():
     if not safe_update_vehicle_state():
-        return jsonify({
-            "status": "error",
-            "message": "Failed to update vehicle state"
-        }), 500
+        return jsonify({"status": "error", "message": "Failed to update vehicle state"}), 500
 
     # Convert both timestamps to UTC for comparison
     last_vehicle_update = vehicle_client.vehicle.last_updated_at
     if not last_vehicle_update.tzinfo:
-        last_vehicle_update = last_vehicle_update.replace(tzinfo=timezone.utc)
+        last_vehicle_update = last_vehicle_update.replace(tzinfo=UTC)
 
     last_db_update = vehicle_client.db_client.get_last_update_timestamp()
-    if not last_db_update.tzinfo:
-        last_db_update = last_db_update.replace(tzinfo=timezone.utc)
+    if last_db_update is None or (last_db_update.tzinfo is None):
+        last_db_update = (last_db_update or datetime.min).replace(tzinfo=UTC)
 
     if last_vehicle_update > last_db_update:
         vehicle_client.save_log()
@@ -165,28 +237,29 @@ def get_cached_status():
     }
     return jsonify(result)
 
+
 @app.route("/battery")
 def get_battery_soc():
     if not safe_update_vehicle_state():
         return "Error: Failed to update vehicle state", 500
 
-    # Convert both timestamps to UTC for comparison
     last_vehicle_update = vehicle_client.vehicle.last_updated_at
     if not last_vehicle_update.tzinfo:
-        last_vehicle_update = last_vehicle_update.replace(tzinfo=timezone.utc)
+        last_vehicle_update = last_vehicle_update.replace(tzinfo=UTC)
 
     last_db_update = vehicle_client.db_client.get_last_update_timestamp()
-    if not last_db_update.tzinfo:
-        last_db_update = last_db_update.replace(tzinfo=timezone.utc)
+    if last_db_update is None or (last_db_update.tzinfo is None):
+        last_db_update = (last_db_update or datetime.min).replace(tzinfo=UTC)
 
     if last_vehicle_update > last_db_update:
         vehicle_client.save_log()
     return str(vehicle_client.vehicle.ev_battery_percentage)
 
+
 @app.route("/charge")
 def toggle_charge():
-    action = request.args.get('action', 'start')
-    wait_for_response = bool(request.args.get('synchronous', False))
+    action = request.args.get("action", "start")
+    wait_for_response = _truthy(request.args.get("synchronous", "false"))
 
     if action == "start":
         vehicle_client.vm.start_charge(vehicle_client.vehicle.id)
@@ -202,16 +275,19 @@ def toggle_charge():
 
     return jsonify({"action": "charge_" + action, "status": "command_sent"})
 
+
 def is_within_active_hours():
     """Check if current time is within the configured active hours"""
     current_hour = datetime.now().hour
-    start_hour = int(os.getenv('REFRESH_START_HOUR', '6'))
-    end_hour = int(os.getenv('REFRESH_END_HOUR', '22'))
+    start_hour = int(os.getenv("REFRESH_START_HOUR", "6"))
+    end_hour = int(os.getenv("REFRESH_END_HOUR", "22"))
     return start_hour <= current_hour < end_hour
+
 
 def get_min_aux_battery_soc():
     """Get minimum auxiliary battery SOC threshold from env, ensuring it's not below 60%"""
-    return max(60, int(os.getenv('MIN_AUX_BATTERY_SOC', '80')))
+    return max(60, int(os.getenv("MIN_AUX_BATTERY_SOC", "80")))
+
 
 def is_aux_battery_ok():
     """Check if auxiliary battery level is above minimum threshold"""
@@ -225,10 +301,12 @@ def is_aux_battery_ok():
     logger.debug(f"Current auxiliary battery SOC: {current_soc}%")
     return current_soc >= min_aux_soc
 
+
 def update_vehicle_state():
     """Force refresh and update vehicle state"""
     vehicle_client.vm.force_refresh_vehicle_state(vehicle_client.vehicle.id)
     vehicle_client.vm.update_vehicle_with_cached_state(vehicle_client.vehicle.id)
+
 
 def scheduled_refresh():
     """Perform scheduled refresh if within active hours and auxiliary battery is OK"""
@@ -242,8 +320,7 @@ def scheduled_refresh():
             return
 
         logger.info("Starting scheduled refresh")
-        
-        # Step 1: Update vehicle state
+
         try:
             update_vehicle_state()
             logger.info("Step 1/2: Vehicle state updated successfully")
@@ -251,101 +328,112 @@ def scheduled_refresh():
             logger.error(f"Step 1/2: Failed to update vehicle state: {str(e)}")
             return
 
-        # Step 2: Process and save data
         try:
             if vehicle_client.vehicle:
-                # Save current state to database
                 vehicle_client.save_log()
                 logger.info("Step 2/2: Vehicle data processed and saved successfully")
             else:
                 logger.warning("Step 2/2: No vehicle data available to process")
         except Exception as e:
             logger.error(f"Step 2/2: Failed to process vehicle data: {str(e)}")
-        
+
         logger.info("Scheduled refresh completed")
-        
+
     except Exception as e:
         logger.error(f"Scheduled refresh failed: {str(e)}")
+
 
 def scheduled_trip_processing():
     """Scheduled trip processing - runs every 2 hours during day"""
     try:
         logger.info("Starting scheduled trip processing")
-        
-        # Ensure we have fresh vehicle data
+
         if not safe_update_vehicle_state():
             logger.error("Failed to update vehicle state for scheduled trip processing")
             return
-        
-        # Process trips if data is available
-        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+
+        if (
+            vehicle_client.vehicle
+            and hasattr(vehicle_client.vehicle, "daily_stats")
+            and vehicle_client.vehicle.daily_stats
+        ):
             vehicle_client.process_trips()
             logger.info("Scheduled trip processing completed successfully")
         else:
             logger.warning("No trip data available for scheduled processing")
-            
+
     except Exception as e:
         logger.error(f"Scheduled trip processing failed: {str(e)}")
+
 
 def scheduled_daily_stats():
     """Scheduled daily stats saving - runs once per day at 23:30"""
     try:
         logger.info("Starting scheduled daily stats saving")
-        
-        # Ensure we have fresh vehicle data
+
         if not safe_update_vehicle_state():
             logger.error("Failed to update vehicle state for scheduled daily stats")
             return
-        
-        # Save daily stats if data is available
-        if vehicle_client.vehicle and hasattr(vehicle_client.vehicle, 'daily_stats') and vehicle_client.vehicle.daily_stats:
+
+        if (
+            vehicle_client.vehicle
+            and hasattr(vehicle_client.vehicle, "daily_stats")
+            and vehicle_client.vehicle.daily_stats
+        ):
             vehicle_client.db_client.save_daily_stats()
             logger.info("Scheduled daily stats saving completed successfully")
         else:
             logger.warning("No daily stats data available for scheduled saving")
-            
+
     except Exception as e:
         logger.error(f"Scheduled daily stats saving failed: {str(e)}")
 
-if __name__ == "__main__":
-    # Load environment variables
+
+def main():
+    global vehicle_client
+
     load_dotenv()
 
-    # Initialize scheduler
-    scheduler_timezone = os.getenv('UVO_TRACKER_TIMEZONE')
+    if not _http_server_password():
+        logger.warning(
+            "HTTP_SERVER_PASSWORD is not set - every endpoint (including /charge) is "
+            "reachable without authentication. Set it in .env to require a token."
+        )
+
+    # Initialize the vehicle client and log in BEFORE the scheduler starts, so a
+    # scheduled job can never fire against a vehicle_client that is still None.
+    vehicle_client = VehicleClient()
+
+    while True:
+        try:
+            vehicle_client.vm.check_and_refresh_token()
+            break
+        except RateLimitingError:
+            logger.error("Got rate limited. Will try again in 1 hour.")
+            time.sleep(60 * 60)
+
+    vehicle_client.vehicle = vehicle_client.vm.get_vehicle(os.environ["UVO_VEHICLE_UUID"])
+
+    scheduler_timezone = os.getenv("UVO_TRACKER_TIMEZONE")
     if scheduler_timezone:
         scheduler = BackgroundScheduler(timezone=pytz_timezone(scheduler_timezone))
     else:
         scheduler = BackgroundScheduler()
-    refresh_interval = int(os.getenv('REFRESH_INTERVAL_MINUTES', '30'))
-    # Add scheduled jobs
-    scheduler.add_job(scheduled_refresh, 'interval', minutes=refresh_interval)
-    
-    # Add trip processing job - every 2 hours during day
-    scheduler.add_job(scheduled_trip_processing, 'cron', hour='8-22/2', minute=0)
-    
-    # Add daily stats job - once per day at 23:30
-    scheduler.add_job(scheduled_daily_stats, 'cron', hour=23, minute=30)
-    
+    refresh_interval = int(os.getenv("REFRESH_INTERVAL_MINUTES", "30"))
+    scheduler.add_job(scheduled_refresh, "interval", minutes=refresh_interval)
+    scheduler.add_job(scheduled_trip_processing, "cron", hour="8-22/2", minute=0)
+    scheduler.add_job(scheduled_daily_stats, "cron", hour=23, minute=30)
     scheduler.start()
 
     try:
-        # Initialize vehicle client
-        vehicle_client = VehicleClient()
-
-        while True:
-            try:
-                vehicle_client.vm.check_and_refresh_token()
-                break
-            except RateLimitingError:
-                logger.error("Got rate limited. Will try again in 1 hour.")
-                time.sleep(60 * 60)
-
-        vehicle_client.vehicle = vehicle_client.vm.get_vehicle(os.environ["UVO_VEHICLE_UUID"])
-
-        # Run Flask app
-        app.run(host='0.0.0.0',
-                port=int(os.getenv('PORT', 5000)),
-                debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
+        app.run(
+            host="0.0.0.0",
+            port=int(os.getenv("PORT", 5000)),
+            debug=os.getenv("FLASK_DEBUG", "false").lower() == "true",
+        )
     except KeyboardInterrupt:
         scheduler.shutdown()
+
+
+if __name__ == "__main__":
+    main()

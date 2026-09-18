@@ -2,7 +2,8 @@ name: Renovate
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"
+    # péntek 03:00 UTC -> a renovate.json "on friday" ablakon belül
+    - cron: "0 3 * * 5"
 jobs:
   renovate:
     runs-on: ubuntu-latest
@@ -14,10 +15,10 @@ jobs:
       security-events: read  
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Run Renovate
-        uses: renovatebot/github-action@v40.1.1
+        uses: renovatebot/github-action@v46.2.6
         with:
           token: ${{ secrets.RENOVATE_TOKEN }}
           configurationFile: renovate.json
