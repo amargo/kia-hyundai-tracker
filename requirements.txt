@@ -5,4 +5,4 @@ python-dateutil==4.0.0
 python-dotenv==1.2.4
 pymysql==1.2.3
 APScheduler==3.11.3
-pytz==2026.5
+pytz==2026.6
